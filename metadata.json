@@ -1,0 +1,6 @@
+{
+  "name": "LEAP Exit Ticket & Intervention Generator",
+  "description": "Louisiana LEAP-aligned 3-tier exit ticket generator and adaptive intervention loop system for Wit & Wisdom ELA, Eureka Math², and Amplify Science.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
