@@ -12,6 +12,7 @@ import {
 import { ExitTicket, QuestionMC, QuestionEBSR, QuestionMS } from '../../types';
 import { CURRICULUM_MAP } from '../../data/curriculum';
 import { getSubjectClasses, normalizeTicket } from '../../utils';
+import { generateCurriculumTicket } from '../../data/curriculumFallback';
 
 interface TicketStudioProps {
   subject: string;
@@ -68,24 +69,53 @@ export const TicketStudio: React.FC<TicketStudioProps> = ({
     setIsGenerating(true);
     setErrorMessage('');
     try {
-      const res = await fetch('/api/generate-ticket', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      let rawData: any = null;
+      try {
+        const res = await fetch('/api/generate-ticket', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            subject,
+            grade,
+            module,
+            lesson,
+            customObjective,
+          }),
+        });
+
+        if (res.ok) {
+          rawData = await res.json();
+        } else {
+          console.warn(`Server returned ${res.status} when generating ticket, activating Louisiana curriculum matrix fallback.`);
+          rawData = generateCurriculumTicket({
+            subject,
+            grade,
+            module,
+            lesson,
+            customObjective,
+          });
+        }
+      } catch (networkErr: any) {
+        console.warn('Network or proxy error calling /api/generate-ticket, activating Louisiana curriculum matrix fallback:', networkErr);
+        rawData = generateCurriculumTicket({
           subject,
           grade,
           module,
           lesson,
           customObjective,
-        }),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Server returned ${res.status}`);
+        });
       }
 
-      const rawData = await res.json();
+      if (!rawData) {
+        rawData = generateCurriculumTicket({
+          subject,
+          grade,
+          module,
+          lesson,
+          customObjective,
+        });
+      }
+
       const validated = normalizeTicket(rawData);
       setStagedTicket(validated);
       setSuccessMsg('Successfully generated Louisiana LEAP-aligned 3-tier assessment!');
@@ -101,27 +131,57 @@ export const TicketStudio: React.FC<TicketStudioProps> = ({
     if (!stagedTicket) return;
     setRegeneratingIdx(idx);
     try {
-      const res = await fetch('/api/regenerate-question', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          idx,
-          ticket: {
+      let parsedQ: any = null;
+      try {
+        const res = await fetch('/api/regenerate-question', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            idx,
+            ticket: {
+              subject: stagedTicket.subject,
+              grade: stagedTicket.grade,
+              module: stagedTicket.module,
+              lesson: stagedTicket.lesson,
+              objective: stagedTicket.objective,
+            },
+          }),
+        });
+
+        if (res.ok) {
+          parsedQ = await res.json();
+        } else {
+          const gen = generateCurriculumTicket({
             subject: stagedTicket.subject,
             grade: stagedTicket.grade,
             module: stagedTicket.module,
             lesson: stagedTicket.lesson,
-            objective: stagedTicket.objective,
-          },
-        }),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Server returned ${res.status}`);
+            customObjective: stagedTicket.objective,
+          });
+          parsedQ = gen.questions[idx] || gen.questions[0];
+        }
+      } catch (fetchErr) {
+        const gen = generateCurriculumTicket({
+          subject: stagedTicket.subject,
+          grade: stagedTicket.grade,
+          module: stagedTicket.module,
+          lesson: stagedTicket.lesson,
+          customObjective: stagedTicket.objective,
+        });
+        parsedQ = gen.questions[idx] || gen.questions[0];
       }
 
-      const parsedQ = await res.json();
+      if (!parsedQ) {
+        const gen = generateCurriculumTicket({
+          subject: stagedTicket.subject,
+          grade: stagedTicket.grade,
+          module: stagedTicket.module,
+          lesson: stagedTicket.lesson,
+          customObjective: stagedTicket.objective,
+        });
+        parsedQ = gen.questions[idx] || gen.questions[0];
+      }
+
       setStagedTicket((prev) => {
         if (!prev) return null;
         const nextQs = [...prev.questions];

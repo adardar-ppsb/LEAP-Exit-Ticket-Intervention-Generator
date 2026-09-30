@@ -6,7 +6,17 @@ import { GoogleGenAI } from "@google/genai";
 import { generateCurriculumTicket } from "./src/data/curriculumFallback";
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
+
+app.use((_req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, Origin, X-Requested-With, Accept");
+  if (_req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+  next();
+});
 
 app.use(express.json({ limit: "10mb" }));
 
@@ -203,7 +213,11 @@ app.put("/api/submissions/:id/intervention", (req, res) => {
 });
 
 // --- AI Ticket Generation API ---
-app.post("/api/generate-ticket", async (req, res) => {
+app.get(["/api/generate-ticket", "/api/generate-ticket/"], (_req, res) => {
+  res.json({ message: "Endpoint active. Please send a POST request with subject, grade, module, and lesson to generate tickets." });
+});
+
+app.post(["/api/generate-ticket", "/api/generate-ticket/"], async (req, res) => {
   try {
     const { subject, grade, module, lesson, customObjective } = req.body;
     const ai = getGeminiClient();
@@ -310,7 +324,11 @@ Custom Objective focus: ${customObjective || "Synthesize primary lesson competen
 });
 
 // --- AI Single Question Regeneration API ---
-app.post("/api/regenerate-question", async (req, res) => {
+app.get(["/api/regenerate-question", "/api/regenerate-question/"], (_req, res) => {
+  res.json({ message: "Endpoint active. Please send a POST request to regenerate question." });
+});
+
+app.post(["/api/regenerate-question", "/api/regenerate-question/"], async (req, res) => {
   try {
     const { idx, ticket } = req.body;
     let data: any = null;
@@ -383,7 +401,11 @@ Ensure absolute rigor. No extra wrapper tags. Return raw parseable JSON object.`
 });
 
 // --- AI Intervention Reflection Grading API ---
-app.post("/api/grade-intervention", async (req, res) => {
+app.get(["/api/grade-intervention", "/api/grade-intervention/"], (_req, res) => {
+  res.json({ message: "Endpoint active. Please send a POST request with prompt, studentAnswer, and skillFocus." });
+});
+
+app.post(["/api/grade-intervention", "/api/grade-intervention/"], async (req, res) => {
   try {
     const { prompt, studentAnswer, skillFocus } = req.body;
     const clean = (studentAnswer || "").trim();
