@@ -83,133 +83,180 @@ app.get("/api/data", (_req, res) => {
 });
 
 // Tickets Management
-app.post("/api/tickets", (req, res) => {
-  const ticket = req.body;
-  if (!ticket) return res.status(400).json({ error: "Ticket payload is required." });
-
-  if (ticket.isActive) {
-    store.tickets = store.tickets.map((t) => ({ ...t, isActive: false }));
-  }
-
-  const newTicket = {
-    ...ticket,
-    id: ticket.id || `ticket-${Date.now()}`,
-    createdAt: ticket.createdAt || new Date().toISOString(),
-  };
-
-  const existingIdx = store.tickets.findIndex((t) => t.id === newTicket.id);
-  if (existingIdx >= 0) {
-    store.tickets[existingIdx] = newTicket;
-  } else {
-    store.tickets.unshift(newTicket);
-  }
-
-  saveDataStore(store);
-  res.json({ success: true, ticket: newTicket, tickets: store.tickets });
+app.get(["/api/tickets", "/api/tickets/"], (_req, res) => {
+  res.json({ success: true, tickets: store.tickets || [] });
 });
 
-app.post("/api/tickets/active/:id", (req, res) => {
-  const { id } = req.params;
-  store.tickets = store.tickets.map((t) => ({
-    ...t,
-    isActive: t.id === id,
-  }));
-  saveDataStore(store);
-  res.json({ success: true, tickets: store.tickets });
+app.post(["/api/tickets", "/api/tickets/"], (req, res) => {
+  try {
+    const ticket = req.body;
+    if (!ticket) return res.status(400).json({ error: "Ticket payload is required." });
+
+    store.tickets = store.tickets || [];
+    if (ticket.isActive) {
+      store.tickets = store.tickets.map((t) => ({ ...t, isActive: false }));
+    }
+
+    const newTicket = {
+      ...ticket,
+      id: ticket.id || `ticket-${Date.now()}`,
+      createdAt: ticket.createdAt || new Date().toISOString(),
+    };
+
+    const existingIdx = store.tickets.findIndex((t) => t.id === newTicket.id);
+    if (existingIdx >= 0) {
+      store.tickets[existingIdx] = newTicket;
+    } else {
+      store.tickets.unshift(newTicket);
+    }
+
+    saveDataStore(store);
+    res.json({ success: true, ticket: newTicket, tickets: store.tickets });
+  } catch (err: any) {
+    console.error("Error saving ticket:", err);
+    res.status(500).json({ error: err.message || "Failed to save ticket." });
+  }
 });
 
-app.delete("/api/tickets/:id", (req, res) => {
-  const { id } = req.params;
-  store.tickets = store.tickets.filter((t) => t.id !== id);
-  saveDataStore(store);
-  res.json({ success: true, tickets: store.tickets });
+app.post(["/api/tickets/active/:id", "/api/tickets/active/:id/"], (req, res) => {
+  try {
+    const { id } = req.params;
+    store.tickets = (store.tickets || []).map((t) => ({
+      ...t,
+      isActive: t.id === id,
+    }));
+    saveDataStore(store);
+    res.json({ success: true, tickets: store.tickets });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to activate ticket." });
+  }
+});
+
+app.delete(["/api/tickets/:id", "/api/tickets/:id/"], (req, res) => {
+  try {
+    const { id } = req.params;
+    store.tickets = (store.tickets || []).filter((t) => t.id !== id);
+    saveDataStore(store);
+    res.json({ success: true, tickets: store.tickets });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to delete ticket." });
+  }
 });
 
 // Roster Management
-app.post("/api/roster", (req, res) => {
-  const { students } = req.body; // array or single object
-  if (!students) return res.status(400).json({ error: "Students array is required." });
-
-  const list = Array.isArray(students) ? students : [students];
-  const map = new Map(store.roster.map((s) => [s.id.toLowerCase(), s]));
-
-  for (const s of list) {
-    if (s && s.id && s.name) {
-      map.set(s.id.toLowerCase(), {
-        id: s.id.trim(),
-        name: s.name.trim(),
-        pin: s.pin ? s.pin.trim() : "0000",
-      });
-    }
-  }
-
-  store.roster = Array.from(map.values());
-  saveDataStore(store);
-  res.json({ success: true, roster: store.roster });
+app.get(["/api/roster", "/api/roster/"], (_req, res) => {
+  res.json({ success: true, roster: store.roster || [] });
 });
 
-app.delete("/api/roster/:id", (req, res) => {
-  const { id } = req.params;
-  store.roster = store.roster.filter((s) => s.id.toLowerCase() !== id.toLowerCase());
-  saveDataStore(store);
-  res.json({ success: true, roster: store.roster });
+app.post(["/api/roster", "/api/roster/"], (req, res) => {
+  try {
+    const { students } = req.body;
+    if (!students) return res.status(400).json({ error: "Students array is required." });
+
+    const list = Array.isArray(students) ? students : [students];
+    const map = new Map((store.roster || []).map((s) => [s.id.toLowerCase(), s]));
+
+    for (const s of list) {
+      if (s && s.id && s.name) {
+        map.set(s.id.toLowerCase(), {
+          id: s.id.trim(),
+          name: s.name.trim(),
+          pin: s.pin ? s.pin.trim() : "0000",
+        });
+      }
+    }
+
+    store.roster = Array.from(map.values());
+    saveDataStore(store);
+    res.json({ success: true, roster: store.roster });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to save roster." });
+  }
+});
+
+app.delete(["/api/roster/:id", "/api/roster/:id/"], (req, res) => {
+  try {
+    const { id } = req.params;
+    store.roster = (store.roster || []).filter((s) => s.id.toLowerCase() !== id.toLowerCase());
+    saveDataStore(store);
+    res.json({ success: true, roster: store.roster });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to delete student." });
+  }
 });
 
 // Submissions Management
-app.post("/api/submissions", (req, res) => {
-  const sub = req.body;
-  if (!sub) return res.status(400).json({ error: "Submission payload required." });
-
-  const subRecord = {
-    ...sub,
-    id: sub.id || `sub-${Date.now()}`,
-    timestamp: sub.timestamp || new Date().toISOString(),
-  };
-
-  const existingIdx = store.submissions.findIndex((s) => s.id === subRecord.id);
-  if (existingIdx >= 0) {
-    store.submissions[existingIdx] = subRecord;
-  } else {
-    store.submissions.unshift(subRecord);
-  }
-
-  saveDataStore(store);
-  res.json({ success: true, submission: subRecord, submissions: store.submissions });
+app.get(["/api/submissions", "/api/submissions/"], (_req, res) => {
+  res.json({ success: true, submissions: store.submissions || [] });
 });
 
-app.put("/api/submissions/:id/override", (req, res) => {
-  const { id } = req.params;
-  const { percentage, interventionScore } = req.body;
+app.post(["/api/submissions", "/api/submissions/"], (req, res) => {
+  try {
+    const sub = req.body;
+    if (!sub) return res.status(400).json({ error: "Submission payload required." });
 
-  const sub = store.submissions.find((s) => s.id === id);
-  if (!sub) return res.status(404).json({ error: "Submission not found." });
+    const subRecord = {
+      ...sub,
+      id: sub.id || `sub-${Date.now()}`,
+      timestamp: sub.timestamp || new Date().toISOString(),
+    };
 
-  sub.percentage = Number(percentage);
-  if (interventionScore !== null && interventionScore !== undefined && interventionScore !== "") {
-    sub.interventionScore = Number(interventionScore);
+    store.submissions = store.submissions || [];
+    const existingIdx = store.submissions.findIndex((s) => s.id === subRecord.id);
+    if (existingIdx >= 0) {
+      store.submissions[existingIdx] = subRecord;
+    } else {
+      store.submissions.unshift(subRecord);
+    }
+
+    saveDataStore(store);
+    res.json({ success: true, submission: subRecord, submissions: store.submissions });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to record submission." });
   }
-  sub.isManuallyEdited = true;
-  sub.manuallyOverriddenAt = new Date().toISOString();
-
-  saveDataStore(store);
-  res.json({ success: true, submission: sub, submissions: store.submissions });
 });
 
-app.put("/api/submissions/:id/intervention", (req, res) => {
-  const { id } = req.params;
-  const { interventionAnswers, interventionScore, aiInterventionEvaluation } = req.body;
+app.put(["/api/submissions/:id/override", "/api/submissions/:id/override/"], (req, res) => {
+  try {
+    const { id } = req.params;
+    const { percentage, interventionScore } = req.body;
 
-  const sub = store.submissions.find((s) => s.id === id);
-  if (!sub) return res.status(404).json({ error: "Submission not found." });
+    const sub = (store.submissions || []).find((s) => s.id === id);
+    if (!sub) return res.status(404).json({ error: "Submission not found." });
 
-  sub.interventionCompleted = true;
-  sub.interventionAnswers = interventionAnswers;
-  sub.interventionScore = interventionScore;
-  sub.aiInterventionEvaluation = aiInterventionEvaluation;
-  sub.interventionTimestamp = new Date().toISOString();
+    sub.percentage = Number(percentage);
+    if (interventionScore !== null && interventionScore !== undefined && interventionScore !== "") {
+      sub.interventionScore = Number(interventionScore);
+    }
+    sub.isManuallyEdited = true;
+    sub.manuallyOverriddenAt = new Date().toISOString();
 
-  saveDataStore(store);
-  res.json({ success: true, submission: sub, submissions: store.submissions });
+    saveDataStore(store);
+    res.json({ success: true, submission: sub, submissions: store.submissions });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to override score." });
+  }
+});
+
+app.put(["/api/submissions/:id/intervention", "/api/submissions/:id/intervention/"], (req, res) => {
+  try {
+    const { id } = req.params;
+    const { interventionAnswers, interventionScore, aiInterventionEvaluation } = req.body;
+
+    const sub = (store.submissions || []).find((s) => s.id === id);
+    if (!sub) return res.status(404).json({ error: "Submission not found." });
+
+    sub.interventionCompleted = true;
+    sub.interventionAnswers = interventionAnswers;
+    sub.interventionScore = interventionScore;
+    sub.aiInterventionEvaluation = aiInterventionEvaluation;
+    sub.interventionTimestamp = new Date().toISOString();
+
+    saveDataStore(store);
+    res.json({ success: true, submission: sub, submissions: store.submissions });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to update intervention." });
+  }
 });
 
 // --- AI Ticket Generation API ---

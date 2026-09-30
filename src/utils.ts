@@ -146,83 +146,335 @@ export const normalizeTicket = (ticket: any): ExitTicket => {
   };
 };
 
-// API Client Functions
+// API Client Functions with Local Storage Resilience
 export async function fetchInitialData(): Promise<{ tickets: ExitTicket[]; roster: Student[]; submissions: StudentSubmission[] }> {
   try {
     const res = await fetch('/api/data');
     if (res.ok) {
-      return await res.json();
+      const data = await res.json();
+      safeStorage.setItem('cached_tickets', JSON.stringify(data.tickets || []));
+      safeStorage.setItem('cached_roster', JSON.stringify(data.roster || []));
+      safeStorage.setItem('cached_submissions', JSON.stringify(data.submissions || []));
+      return {
+        tickets: data.tickets || [],
+        roster: data.roster || [],
+        submissions: data.submissions || [],
+      };
     }
   } catch (err) {
-    console.warn('Could not fetch server data, fallback to local', err);
+    console.warn('Could not fetch server data, falling back to local cache:', err);
   }
-  return { tickets: [], roster: [], submissions: [] };
+
+  try {
+    const tickets = JSON.parse(safeStorage.getItem('cached_tickets') || '[]');
+    const roster = JSON.parse(safeStorage.getItem('cached_roster') || '[]');
+    const submissions = JSON.parse(safeStorage.getItem('cached_submissions') || '[]');
+    return { tickets, roster, submissions };
+  } catch {
+    return { tickets: [], roster: [], submissions: [] };
+  }
 }
 
 export async function apiSaveTicket(ticket: ExitTicket): Promise<{ success: boolean; ticket: ExitTicket; tickets: ExitTicket[] }> {
-  const res = await fetch('/api/tickets', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(ticket),
-  });
-  if (!res.ok) throw new Error(`Save failed: ${res.statusText}`);
-  return await res.json();
+  // Update local cache first
+  const localTickets: ExitTicket[] = (() => {
+    try {
+      return JSON.parse(safeStorage.getItem('cached_tickets') || '[]');
+    } catch {
+      return [];
+    }
+  })();
+
+  const newTicket: ExitTicket = {
+    ...ticket,
+    id: ticket.id || `ticket-${Date.now()}`,
+    createdAt: ticket.createdAt || new Date().toISOString(),
+  };
+
+  let updatedList = localTickets;
+  if (newTicket.isActive) {
+    updatedList = updatedList.map((t) => ({ ...t, isActive: false }));
+  }
+
+  const existingIdx = updatedList.findIndex((t) => t.id === newTicket.id);
+  if (existingIdx >= 0) {
+    updatedList[existingIdx] = newTicket;
+  } else {
+    updatedList.unshift(newTicket);
+  }
+  safeStorage.setItem('cached_tickets', JSON.stringify(updatedList));
+
+  // Sync to server
+  try {
+    const res = await fetch('/api/tickets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newTicket),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.tickets) {
+        safeStorage.setItem('cached_tickets', JSON.stringify(data.tickets));
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('Server sync error for /api/tickets, using local store:', err);
+  }
+
+  return { success: true, ticket: newTicket, tickets: updatedList };
 }
 
 export async function apiSetActiveTicket(id: string): Promise<{ success: boolean; tickets: ExitTicket[] }> {
-  const res = await fetch(`/api/tickets/active/${id}`, { method: 'POST' });
-  if (!res.ok) throw new Error(`Activation failed: ${res.statusText}`);
-  return await res.json();
+  const localTickets: ExitTicket[] = (() => {
+    try {
+      return JSON.parse(safeStorage.getItem('cached_tickets') || '[]');
+    } catch {
+      return [];
+    }
+  })();
+
+  const updatedList = localTickets.map((t) => ({
+    ...t,
+    isActive: t.id === id,
+  }));
+  safeStorage.setItem('cached_tickets', JSON.stringify(updatedList));
+
+  try {
+    const res = await fetch(`/api/tickets/active/${id}`, { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.tickets) {
+        safeStorage.setItem('cached_tickets', JSON.stringify(data.tickets));
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('Server sync error for active ticket:', err);
+  }
+
+  return { success: true, tickets: updatedList };
 }
 
 export async function apiDeleteTicket(id: string): Promise<{ success: boolean; tickets: ExitTicket[] }> {
-  const res = await fetch(`/api/tickets/${id}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error(`Delete failed: ${res.statusText}`);
-  return await res.json();
+  const localTickets: ExitTicket[] = (() => {
+    try {
+      return JSON.parse(safeStorage.getItem('cached_tickets') || '[]');
+    } catch {
+      return [];
+    }
+  })();
+
+  const updatedList = localTickets.filter((t) => t.id !== id);
+  safeStorage.setItem('cached_tickets', JSON.stringify(updatedList));
+
+  try {
+    const res = await fetch(`/api/tickets/${id}`, { method: 'DELETE' });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.tickets) {
+        safeStorage.setItem('cached_tickets', JSON.stringify(data.tickets));
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('Server sync error deleting ticket:', err);
+  }
+
+  return { success: true, tickets: updatedList };
 }
 
 export async function apiSaveRoster(students: Student | Student[]): Promise<{ success: boolean; roster: Student[] }> {
-  const res = await fetch('/api/roster', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ students }),
-  });
-  if (!res.ok) throw new Error(`Roster save failed: ${res.statusText}`);
-  return await res.json();
+  const list = Array.isArray(students) ? students : [students];
+  const localRoster: Student[] = (() => {
+    try {
+      return JSON.parse(safeStorage.getItem('cached_roster') || '[]');
+    } catch {
+      return [];
+    }
+  })();
+
+  const map = new Map(localRoster.map((s) => [s.id.toLowerCase(), s]));
+  for (const s of list) {
+    if (s && s.id && s.name) {
+      map.set(s.id.toLowerCase(), {
+        id: s.id.trim(),
+        name: s.name.trim(),
+        pin: s.pin ? s.pin.trim() : '0000',
+      });
+    }
+  }
+
+  const updatedRoster = Array.from(map.values());
+  safeStorage.setItem('cached_roster', JSON.stringify(updatedRoster));
+
+  try {
+    const res = await fetch('/api/roster', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ students: list }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.roster) {
+        safeStorage.setItem('cached_roster', JSON.stringify(data.roster));
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('Server sync error saving roster:', err);
+  }
+
+  return { success: true, roster: updatedRoster };
 }
 
 export async function apiDeleteStudent(id: string): Promise<{ success: boolean; roster: Student[] }> {
-  const res = await fetch(`/api/roster/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error(`Student remove failed: ${res.statusText}`);
-  return await res.json();
+  const localRoster: Student[] = (() => {
+    try {
+      return JSON.parse(safeStorage.getItem('cached_roster') || '[]');
+    } catch {
+      return [];
+    }
+  })();
+
+  const updatedRoster = localRoster.filter((s) => s.id.toLowerCase() !== id.toLowerCase());
+  safeStorage.setItem('cached_roster', JSON.stringify(updatedRoster));
+
+  try {
+    const res = await fetch(`/api/roster/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.roster) {
+        safeStorage.setItem('cached_roster', JSON.stringify(data.roster));
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('Server sync error deleting student:', err);
+  }
+
+  return { success: true, roster: updatedRoster };
 }
 
 export async function apiSaveSubmission(submission: StudentSubmission): Promise<{ success: boolean; submission: StudentSubmission; submissions: StudentSubmission[] }> {
-  const res = await fetch('/api/submissions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(submission),
-  });
-  if (!res.ok) throw new Error(`Submission failed: ${res.statusText}`);
-  return await res.json();
+  const localSubs: StudentSubmission[] = (() => {
+    try {
+      return JSON.parse(safeStorage.getItem('cached_submissions') || '[]');
+    } catch {
+      return [];
+    }
+  })();
+
+  const subRecord: StudentSubmission = {
+    ...submission,
+    id: submission.id || `sub-${Date.now()}`,
+    timestamp: submission.timestamp || new Date().toISOString(),
+  };
+
+  const existingIdx = localSubs.findIndex((s) => s.id === subRecord.id);
+  let updatedSubs = [...localSubs];
+  if (existingIdx >= 0) {
+    updatedSubs[existingIdx] = subRecord;
+  } else {
+    updatedSubs.unshift(subRecord);
+  }
+  safeStorage.setItem('cached_submissions', JSON.stringify(updatedSubs));
+
+  try {
+    const res = await fetch('/api/submissions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(subRecord),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.submissions) {
+        safeStorage.setItem('cached_submissions', JSON.stringify(data.submissions));
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('Server sync error saving submission:', err);
+  }
+
+  return { success: true, submission: subRecord, submissions: updatedSubs };
 }
 
 export async function apiOverrideScore(id: string, percentage: number, interventionScore?: number | null): Promise<{ success: boolean; submission: StudentSubmission; submissions: StudentSubmission[] }> {
-  const res = await fetch(`/api/submissions/${encodeURIComponent(id)}/override`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ percentage, interventionScore }),
-  });
-  if (!res.ok) throw new Error(`Override failed: ${res.statusText}`);
-  return await res.json();
+  const localSubs: StudentSubmission[] = (() => {
+    try {
+      return JSON.parse(safeStorage.getItem('cached_submissions') || '[]');
+    } catch {
+      return [];
+    }
+  })();
+
+  const sub = localSubs.find((s) => s.id === id);
+  if (sub) {
+    sub.percentage = Number(percentage);
+    if (interventionScore !== null && interventionScore !== undefined && !Number.isNaN(Number(interventionScore))) {
+      sub.interventionScore = Number(interventionScore);
+    }
+    sub.isManuallyEdited = true;
+    sub.manuallyOverriddenAt = new Date().toISOString();
+    safeStorage.setItem('cached_submissions', JSON.stringify(localSubs));
+  }
+
+  try {
+    const res = await fetch(`/api/submissions/${encodeURIComponent(id)}/override`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ percentage, interventionScore }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.submissions) {
+        safeStorage.setItem('cached_submissions', JSON.stringify(data.submissions));
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('Server sync error overriding score:', err);
+  }
+
+  return { success: true, submission: sub!, submissions: localSubs };
 }
 
 export async function apiSaveIntervention(id: string, payload: { interventionAnswers: any; interventionScore: number; aiInterventionEvaluation: any }): Promise<{ success: boolean; submission: StudentSubmission; submissions: StudentSubmission[] }> {
-  const res = await fetch(`/api/submissions/${encodeURIComponent(id)}/intervention`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error(`Intervention update failed: ${res.statusText}`);
-  return await res.json();
+  const localSubs: StudentSubmission[] = (() => {
+    try {
+      return JSON.parse(safeStorage.getItem('cached_submissions') || '[]');
+    } catch {
+      return [];
+    }
+  })();
+
+  const sub = localSubs.find((s) => s.id === id);
+  if (sub) {
+    sub.interventionCompleted = true;
+    sub.interventionAnswers = payload.interventionAnswers;
+    sub.interventionScore = payload.interventionScore;
+    sub.aiInterventionEvaluation = payload.aiInterventionEvaluation;
+    sub.interventionTimestamp = new Date().toISOString();
+    safeStorage.setItem('cached_submissions', JSON.stringify(localSubs));
+  }
+
+  try {
+    const res = await fetch(`/api/submissions/${encodeURIComponent(id)}/intervention`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.submissions) {
+        safeStorage.setItem('cached_submissions', JSON.stringify(data.submissions));
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('Server sync error updating intervention:', err);
+  }
+
+  return { success: true, submission: sub!, submissions: localSubs };
 }
