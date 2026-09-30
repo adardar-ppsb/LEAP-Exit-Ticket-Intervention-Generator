@@ -88,7 +88,7 @@ export const TicketStudio: React.FC<TicketStudioProps> = ({
       const rawData = await res.json();
       const validated = normalizeTicket(rawData);
       setStagedTicket(validated);
-      setSuccessMsg('Successfully generated 3-tier assessment using Gemini 3.8 Flash!');
+      setSuccessMsg('Successfully generated Louisiana LEAP-aligned 3-tier assessment!');
       setTimeout(() => setSuccessMsg(''), 4000);
     } catch (err: any) {
       setErrorMessage(`Ticket generation failed: ${err.message}`);

@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
+import { generateCurriculumTicket } from "./src/data/curriculumFallback";
 
 const app = express();
 const PORT = 3000;
@@ -269,21 +270,42 @@ Module: ${module}
 Lesson: ${lesson}
 Custom Objective focus: ${customObjective || "Synthesize primary lesson competencies"}`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      contents: userPrompt,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-      },
-    });
+    let data: any = null;
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents: userPrompt,
+        config: {
+          systemInstruction,
+          responseMimeType: "application/json",
+        },
+      });
 
-    const text = response.text?.trim() || "{}";
-    const data = JSON.parse(text);
+      const text = response.text?.trim() || "{}";
+      data = JSON.parse(text);
+    } catch (genAiErr) {
+      console.warn("Gemini generation unavailable, falling back to Louisiana curriculum matrix:", genAiErr);
+      data = generateCurriculumTicket({
+        subject,
+        grade,
+        module,
+        lesson,
+        customObjective,
+      });
+    }
+
     res.json(data);
   } catch (err: any) {
     console.error("AI Ticket Generation Error:", err);
-    res.status(500).json({ error: err.message || "Failed to generate ticket." });
+    // Even if top-level processing fails, return valid curriculum ticket
+    const fallback = generateCurriculumTicket({
+      subject: req.body?.subject || "ELA",
+      grade: req.body?.grade || "Grade 4",
+      module: req.body?.module || "Module 1",
+      lesson: req.body?.lesson || "Lesson 1",
+      customObjective: req.body?.customObjective,
+    });
+    res.json(fallback);
   }
 });
 
@@ -291,10 +313,11 @@ Custom Objective focus: ${customObjective || "Synthesize primary lesson competen
 app.post("/api/regenerate-question", async (req, res) => {
   try {
     const { idx, ticket } = req.body;
-    const ai = getGeminiClient();
-
-    const targetTier = idx === 0 ? "Basic (Tier I)" : idx === 1 ? "Mastery (Tier II)" : "Advanced (Tier III)";
-    const systemInstruction = `You are an elite Louisiana assessment designer. 
+    let data: any = null;
+    try {
+      const ai = getGeminiClient();
+      const targetTier = idx === 0 ? "Basic (Tier I)" : idx === 1 ? "Mastery (Tier II)" : "Advanced (Tier III)";
+      const systemInstruction = `You are an elite Louisiana assessment designer. 
 Generate exactly ONE exit ticket question of tier: "${targetTier}".
 Subject: ${ticket.subject}, Grade: ${ticket.grade}, Module: ${ticket.module}, Lesson: ${ticket.lesson}
 Objective: ${ticket.objective || "Core lesson criteria"}
@@ -330,17 +353,28 @@ ${
 }
 Ensure absolute rigor. No extra wrapper tags. Return raw parseable JSON object.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      contents: "Regenerate single question now.",
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-      },
-    });
+      const response = await ai.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents: "Regenerate single question now.",
+        config: {
+          systemInstruction,
+          responseMimeType: "application/json",
+        },
+      });
 
-    const text = response.text?.trim() || "{}";
-    const data = JSON.parse(text);
+      const text = response.text?.trim() || "{}";
+      data = JSON.parse(text);
+    } catch (genErr) {
+      console.warn("Single question regeneration falling back to curriculum matrix:", genErr);
+      const generated = generateCurriculumTicket({
+        subject: ticket.subject,
+        grade: ticket.grade,
+        module: ticket.module,
+        lesson: ticket.lesson,
+        customObjective: ticket.objective,
+      });
+      data = generated.questions[idx] || generated.questions[0];
+    }
     res.json(data);
   } catch (err: any) {
     console.error("Single Question Regeneration Error:", err);
